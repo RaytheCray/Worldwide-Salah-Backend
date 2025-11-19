@@ -1,11 +1,19 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
+from config import Config
+from utils.db import execute_query
 import math
 from hijri_converter import Hijri, Gregorian
 
 app = Flask(__name__)
+app.config.from_object(Config)
+
+# Initialize extensions
 CORS(app)  # Enable CORS for Flutter app
+jwt = JWTManager(app)
 
 # Calculation methods with their parameters
 CALCULATION_METHODS = {
@@ -117,6 +125,136 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard')
         'isha': format_time(isha)
     }
 
+def cache_prayer_times(lat, lon, date, method, asr_method, times):
+    """Cache calculated prayer times to database"""
+    try:
+        query = """
+            INSERT INTO prayer_time_cache 
+            (latitude, longitude, calculation_method, asr_method, prayer_date,
+             fajr_time, sunrise_time, dhuhr_time, asr_time, maghrib_time, isha_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (latitude, longitude, calculation_method, asr_method, prayer_date)
+            DO UPDATE SET
+                fajr_time = EXCLUDED.fajr_time,
+                sunrise_time = EXCLUDED.sunrise_time,
+                dhuhr_time = EXCLUDED.dhuhr_time,
+                asr_time = EXCLUDED.asr_time,
+                maghrib_time = EXCLUDED.maghrib_time,
+                isha_time = EXCLUDED.isha_time
+        """
+        execute_query(query, (
+            lat, lon, method, asr_method, date,
+            times['fajr'], times['sunrise'], times['dhuhr'],
+            times['asr'], times['maghrib'], times['isha']
+        ))
+    except Exception as e:
+        print(f"Cache error: {e}")
+
+def get_cached_prayer_times(lat, lon, date, method, asr_method):
+    """Get prayer times from cache"""
+    try:
+        query = """
+            SELECT fajr_time, sunrise_time, dhuhr_time, asr_time, 
+                   maghrib_time, isha_time
+            FROM prayer_time_cache
+            WHERE latitude = %s AND longitude = %s 
+              AND prayer_date = %s
+              AND calculation_method = %s
+              AND asr_method = %s
+        """
+        result = execute_query(query, (lat, lon, date, method, asr_method), fetch_one=True)
+        
+        if result:
+            # Convert time objects to strings
+            return {
+                'fajr': str(result['fajr_time']),
+                'sunrise': str(result['sunrise_time']),
+                'dhuhr': str(result['dhuhr_time']),
+                'asr': str(result['asr_time']),
+                'maghrib': str(result['maghrib_time']),
+                'isha': str(result['isha_time'])
+            }
+        return None
+    except Exception as e:
+        print(f"Cache retrieval error: {e}")
+        return None
+
+# ============= AUTHENTICATION ROUTES =============
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """Register a new user"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        full_name = data.get('full_name')
+        
+        if not email or not password:
+            return jsonify({'success': False, 'error': 'Email and password required'}), 400
+        
+        # Hash password
+        password_hash = generate_password_hash(password)
+        
+        # Insert user
+        query = """
+            INSERT INTO users (email, password_hash, full_name)
+            VALUES (%s, %s, %s)
+            RETURNING user_id, email, full_name
+        """
+        result = execute_query(query, (email, password_hash, full_name), fetch_one=True)
+        
+        # Create default preferences
+        pref_query = "INSERT INTO user_preferences (user_id) VALUES (%s)"
+        execute_query(pref_query, (result['user_id'],))
+        
+        # Generate JWT token
+        access_token = create_access_token(identity=result['user_id'])
+        
+        return jsonify({
+            'success': True,
+            'message': 'User created successfully',
+            'user': dict(result),
+            'access_token': access_token
+        }), 201
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """Login user"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        
+        # Get user
+        query = "SELECT user_id, email, password_hash, full_name FROM users WHERE email = %s"
+        user = execute_query(query, (email,), fetch_one=True)
+        
+        if not user or not check_password_hash(user['password_hash'], password):
+            return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+        
+        # Generate JWT token
+        access_token = create_access_token(identity=user['user_id'])
+        
+        return jsonify({
+            'success': True,
+            'message': 'Login successful',
+            'user': {
+                'user_id': user['user_id'],
+                'email': user['email'],
+                'full_name': user['full_name']
+            },
+            'access_token': access_token
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ============= PRAYER TIME ROUTES =============
+
 @app.route('/api/prayer-times', methods=['POST'])
 def get_prayer_times():
     """Get prayer times for a specific location and date"""
@@ -130,14 +268,33 @@ def get_prayer_times():
         asr_method = data.get('asr_method', 'standard')
         
         date = datetime.strptime(date_str, '%Y-%m-%d')
+        
+        # Try to get from cache first
+        cached_times = get_cached_prayer_times(lat, lon, date_str, method, asr_method)
+        
+        if cached_times:
+            return jsonify({
+                'success': True,
+                'date': date_str,
+                'times': cached_times,
+                'method': method,
+                'asr_method': asr_method,
+                'cached': True
+            })
+        
+        # Calculate if not cached
         times = calculate_prayer_times(lat, lon, date, method, asr_method)
+        
+        # Cache the results
+        cache_prayer_times(lat, lon, date_str, method, asr_method, times)
         
         return jsonify({
             'success': True,
             'date': date_str,
             'times': times,
             'method': method,
-            'asr_method': asr_method
+            'asr_method': asr_method,
+            'cached': False
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
@@ -166,9 +323,19 @@ def get_monthly_prayers():
         monthly_times = []
         for day in range(1, days_in_month + 1):
             date = datetime(year, month, day)
-            times = calculate_prayer_times(lat, lon, date, method, asr_method)
+            date_str = date.strftime('%Y-%m-%d')
+            
+            # Try cache first
+            cached = get_cached_prayer_times(lat, lon, date_str, method, asr_method)
+            
+            if cached:
+                times = cached
+            else:
+                times = calculate_prayer_times(lat, lon, date, method, asr_method)
+                cache_prayer_times(lat, lon, date_str, method, asr_method, times)
+            
             monthly_times.append({
-                'date': date.strftime('%Y-%m-%d'),
+                'date': date_str,
                 'day': day,
                 'times': times
             })
@@ -182,6 +349,88 @@ def get_monthly_prayers():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
+# ============= MOSQUE ROUTES =============
+
+@app.route('/api/mosques/nearby', methods=['GET'])
+def get_nearby_mosques():
+    """Find mosques within radius of coordinates"""
+    try:
+        lat = float(request.args.get('lat'))
+        lng = float(request.args.get('lng'))
+        radius = float(request.args.get('radius', 10))  # km
+        
+        # Haversine formula for distance calculation
+        query = """
+            SELECT mosque_id, name, address, city, country,
+                   latitude, longitude, phone, website,
+                   (6371 * acos(
+                       cos(radians(%s)) * cos(radians(latitude)) *
+                       cos(radians(longitude) - radians(%s)) +
+                       sin(radians(%s)) * sin(radians(latitude))
+                   )) AS distance
+            FROM mosques
+            WHERE verified = true
+            HAVING distance < %s
+            ORDER BY distance
+            LIMIT 20
+        """
+        
+        mosques = execute_query(query, (lat, lng, lat, radius))
+        
+        return jsonify({
+            'success': True,
+            'location': {'lat': lat, 'lng': lng},
+            'radius_km': radius,
+            'count': len(mosques),
+            'mosques': [dict(m) for m in mosques]
+        })
+        
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid parameters'}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/mosques/<int:mosque_id>/prayer-times', methods=['GET'])
+def get_mosque_prayer_times(mosque_id):
+    """Get congregational prayer times for a mosque"""
+    try:
+        query = """
+            SELECT m.name, m.address, m.city,
+                   mpt.prayer_name, mpt.prayer_time, mpt.day_of_week
+            FROM mosques m
+            JOIN mosque_prayer_times mpt ON m.mosque_id = mpt.mosque_id
+            WHERE m.mosque_id = %s
+            ORDER BY 
+                CASE mpt.prayer_name
+                    WHEN 'Fajr' THEN 1
+                    WHEN 'Dhuhr' THEN 2
+                    WHEN 'Asr' THEN 3
+                    WHEN 'Maghrib' THEN 4
+                    WHEN 'Isha' THEN 5
+                END
+        """
+        
+        results = execute_query(query, (mosque_id,))
+        
+        if not results:
+            return jsonify({'success': False, 'error': 'Mosque not found'}), 404
+            
+        return jsonify({
+            'success': True,
+            'mosque_id': mosque_id,
+            'mosque_info': {
+                'name': results[0]['name'],
+                'address': results[0]['address'],
+                'city': results[0]['city']
+            },
+            'prayer_times': [dict(r) for r in results]
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ============= RAMADAN ROUTES =============
+
 @app.route('/api/ramadan', methods=['POST'])
 def get_ramadan_info():
     """Get Ramadan start/end dates and fasting times"""
@@ -193,32 +442,56 @@ def get_ramadan_info():
         year = int(data.get('year', datetime.now().year))
         method = data.get('method', 'ISNA')
         
-        # Calculate Ramadan dates (Ramadan is 9th month of Hijri calendar)
-        hijri_start = Hijri(year - 621, 9, 1)  # Approximate conversion
-        greg_start = hijri_start.to_gregorian()
+        # Check database for Ramadan dates first
+        query = "SELECT start_date, end_date FROM ramadan_dates WHERE gregorian_year = %s"
+        ramadan_info = execute_query(query, (year,), fetch_one=True)
         
-        # Ramadan is 29-30 days
+        if ramadan_info:
+            start_date = ramadan_info['start_date']
+            end_date = ramadan_info['end_date']
+        else:
+            # Fallback calculation
+            hijri_start = Hijri(year - 621, 9, 1)
+            greg_start = hijri_start.to_gregorian()
+            start_date = datetime(greg_start.year, greg_start.month, greg_start.day)
+            end_date = start_date + timedelta(days=29)
+        
+        # Calculate fasting times for each day
         ramadan_days = []
-        for day in range(30):
-            date = datetime(greg_start.year, greg_start.month, greg_start.day) + timedelta(days=day)
-            times = calculate_prayer_times(lat, lon, date, method)
+        current_date = start_date if isinstance(start_date, datetime) else datetime.combine(start_date, datetime.min.time())
+        end_date_obj = end_date if isinstance(end_date, datetime) else datetime.combine(end_date, datetime.min.time())
+        
+        while current_date <= end_date_obj:
+            date_str = current_date.strftime('%Y-%m-%d')
+            
+            # Get or calculate prayer times
+            cached = get_cached_prayer_times(lat, lon, date_str, method, 'standard')
+            if cached:
+                times = cached
+            else:
+                times = calculate_prayer_times(lat, lon, current_date, method, 'standard')
+                cache_prayer_times(lat, lon, date_str, method, 'standard', times)
             
             ramadan_days.append({
-                'date': date.strftime('%Y-%m-%d'),
-                'day': day + 1,
-                'suhoor_end': times['fajr'],  # Stop eating at Fajr
-                'iftar': times['maghrib']  # Break fast at Maghrib
+                'date': date_str,
+                'day': len(ramadan_days) + 1,
+                'suhoor_end': times['fajr'],
+                'iftar': times['maghrib']
             })
+            
+            current_date += timedelta(days=1)
         
         return jsonify({
             'success': True,
             'year': year,
-            'start_date': ramadan_days[0]['date'],
-            'end_date': ramadan_days[-1]['date'],
+            'start_date': ramadan_days[0]['date'] if ramadan_days else None,
+            'end_date': ramadan_days[-1]['date'] if ramadan_days else None,
             'fasting_schedule': ramadan_days
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
+
+# ============= QIBLA ROUTE =============
 
 @app.route('/api/qibla', methods=['POST'])
 def get_qibla_direction():
@@ -257,6 +530,71 @@ def get_qibla_direction():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
+# ============= USER PREFERENCES ROUTES =============
+
+@app.route('/api/user/preferences', methods=['GET'])
+@jwt_required()
+def get_user_preferences():
+    """Get user preferences"""
+    try:
+        user_id = get_jwt_identity()
+        
+        query = """
+            SELECT calculation_method, asr_method, theme, language,
+                   notifications_enabled, adhan_enabled
+            FROM user_preferences
+            WHERE user_id = %s
+        """
+        prefs = execute_query(query, (user_id,), fetch_one=True)
+        
+        if not prefs:
+            return jsonify({'success': False, 'error': 'Preferences not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'preferences': dict(prefs)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/user/preferences', methods=['PUT'])
+@jwt_required()
+def update_user_preferences():
+    """Update user preferences"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        query = """
+            UPDATE user_preferences
+            SET calculation_method = COALESCE(%s, calculation_method),
+                asr_method = COALESCE(%s, asr_method),
+                theme = COALESCE(%s, theme),
+                language = COALESCE(%s, language),
+                notifications_enabled = COALESCE(%s, notifications_enabled),
+                adhan_enabled = COALESCE(%s, adhan_enabled)
+            WHERE user_id = %s
+        """
+        
+        execute_query(query, (
+            data.get('calculation_method'),
+            data.get('asr_method'),
+            data.get('theme'),
+            data.get('language'),
+            data.get('notifications_enabled'),
+            data.get('adhan_enabled'),
+            user_id
+        ))
+        
+        return jsonify({
+            'success': True,
+            'message': 'Preferences updated successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ============= UTILITY ROUTES =============
+
 @app.route('/api/calculation-methods', methods=['GET'])
 def get_calculation_methods():
     """Return available calculation methods"""
@@ -276,9 +614,17 @@ def get_calculation_methods():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
+    try:
+        # Test database connection
+        execute_query("SELECT 1", fetch_one=True)
+        db_status = 'connected'
+    except:
+        db_status = 'disconnected'
+    
     return jsonify({
         'success': True,
         'status': 'running',
+        'database': db_status,
         'timestamp': datetime.now().isoformat()
     })
 
