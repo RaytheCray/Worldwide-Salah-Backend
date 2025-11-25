@@ -359,35 +359,43 @@ def get_nearby_mosques():
         lng = float(request.args.get('lng'))
         radius = float(request.args.get('radius', 10))  # km
         
-        # Haversine formula for distance calculation
+        # Fixed query - use subquery to properly filter by calculated distance
         query = """
-            SELECT mosque_id, name, address, city, country,
-                   latitude, longitude, phone, website,
-                   (6371 * acos(
-                       cos(radians(%s)) * cos(radians(latitude)) *
-                       cos(radians(longitude) - radians(%s)) +
-                       sin(radians(%s)) * sin(radians(latitude))
-                   )) AS distance
-            FROM mosques
-            WHERE verified = true
-            HAVING distance < %s
+            SELECT * FROM (
+                SELECT mosque_id, name, address, city, country,
+                       latitude, longitude, phone, website,
+                       (6371 * acos(
+                           cos(radians(%s)) * cos(radians(latitude)) *
+                           cos(radians(longitude) - radians(%s)) +
+                           sin(radians(%s)) * sin(radians(latitude))
+                       )) AS distance
+                FROM mosques
+                WHERE verified = true
+            ) AS mosques_with_distance
+            WHERE distance < %s
             ORDER BY distance
             LIMIT 20
         """
         
         mosques = execute_query(query, (lat, lng, lat, radius))
         
+        # Handle case where no mosques found
+        mosque_list = []
+        if mosques:
+            mosque_list = [dict(m) for m in mosques]
+        
         return jsonify({
             'success': True,
             'location': {'lat': lat, 'lng': lng},
             'radius_km': radius,
-            'count': len(mosques),
-            'mosques': [dict(m) for m in mosques]
+            'count': len(mosque_list),
+            'mosques': mosque_list
         })
         
-    except ValueError:
-        return jsonify({'success': False, 'error': 'Invalid parameters'}), 400
+    except ValueError as e:
+        return jsonify({'success': False, 'error': f'Invalid parameters: {str(e)}'}), 400
     except Exception as e:
+        print(f"❌ Mosque query error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/mosques/<int:mosque_id>/prayer-times', methods=['GET'])
