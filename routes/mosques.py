@@ -7,12 +7,19 @@ bp = Blueprint('mosques', __name__)
 @bp.route('/nearby', methods=['GET'])
 def get_nearby_mosques():
     """Find mosques within radius of coordinates"""
+
     try:
-        lat = float(request.args.get('lat'))
-        lng = float(request.args.get('lng'))
-        radius = float(request.args.get('radius', 10))  # km
-        
-        # Haversine formula for distance calculation
+        lat = request.args.get('lat')
+        lng = request.args.get('lng')
+
+        if lat is None or lng is None:
+            return jsonify({"error": "Missing 'lat' or 'lng'"}), 400
+
+        lat = float(lat)
+        lng = float(lng)
+
+        radius = float(request.args.get('radius', 10))
+
         query = """
             SELECT mosque_id, name, address, city, country,
                    latitude, longitude, phone, website,
@@ -27,18 +34,18 @@ def get_nearby_mosques():
             ORDER BY distance
             LIMIT 20
         """
-        
+
         mosques = execute_query(query, (lat, lng, lat, radius))
-        
+
         return jsonify({
             'location': {'lat': lat, 'lng': lng},
             'radius_km': radius,
             'count': len(mosques),
             'mosques': mosques
         })
-        
+
     except ValueError:
-        return jsonify({'error': 'Invalid parameters'}), 400
+        return jsonify({'error': 'Invalid coordinates'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
