@@ -7,47 +7,44 @@ bp = Blueprint('mosques', __name__)
 @bp.route('/nearby', methods=['GET'])
 def get_nearby_mosques():
     """Find mosques within radius of coordinates"""
-
     try:
-        lat = request.args.get('lat')
-        lng = request.args.get('lng')
-
-        if lat is None or lng is None:
-            return jsonify({"error": "Missing 'lat' or 'lng'"}), 400
-
-        lat = float(lat)
-        lng = float(lng)
-
-        radius = float(request.args.get('radius', 10))
-
+        lat = float(request.args.get('lat'))
+        lng = float(request.args.get('lng'))
+        radius = float(request.args.get('radius', 10))  # km
+        
+        # Fixed query with subquery
         query = """
-            SELECT mosque_id, name, address, city, country,
-                   latitude, longitude, phone, website,
-                   (6371 * acos(
-                       cos(radians(%s)) * cos(radians(latitude)) *
-                       cos(radians(longitude) - radians(%s)) +
-                       sin(radians(%s)) * sin(radians(latitude))
-                   )) AS distance
-            FROM mosques
-            WHERE verified = true
-            HAVING distance < %s
+            SELECT * FROM (
+                SELECT mosque_id, name, address, city, country,
+                       latitude, longitude, phone, website,
+                       (6371 * acos(
+                           cos(radians(%s)) * cos(radians(latitude)) *
+                           cos(radians(longitude) - radians(%s)) +
+                           sin(radians(%s)) * sin(radians(latitude))
+                       )) AS distance
+                FROM mosques
+                WHERE verified = true
+            ) AS mosques_with_distance
+            WHERE distance < %s
             ORDER BY distance
             LIMIT 20
         """
-
+        
         mosques = execute_query(query, (lat, lng, lat, radius))
-
+        
         return jsonify({
+            'success': True,
             'location': {'lat': lat, 'lng': lng},
             'radius_km': radius,
-            'count': len(mosques),
-            'mosques': mosques
+            'count': len(mosques) if mosques else 0,
+            'mosques': [dict(m) for m in (mosques or [])]
         })
-
+        
     except ValueError:
-        return jsonify({'error': 'Invalid coordinates'}), 400
+        return jsonify({'success': False, 'error': 'Invalid parameters'}), 400
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @bp.route('/<int:mosque_id>/prayer-times', methods=['GET'])
 def get_mosque_prayer_times(mosque_id):
