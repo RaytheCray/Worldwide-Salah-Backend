@@ -33,8 +33,23 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard',
     params = CALCULATION_METHODS.get(method, CALCULATION_METHODS['ISNA'])
     
     # Auto-calculate timezone offset from longitude if not provided
+     # IMPROVED: Better timezone detection
     if timezone_offset is None:
-        timezone_offset = round(lon / 15)
+        # Use timezonefinder library (added to requirements.txt)
+        from timezonefinder import TimezoneFinder
+        from datetime import timezone as tz
+        import pytz
+        
+        tf = TimezoneFinder()
+        timezone_str = tf.timezone_at(lat=lat, lng=lon)
+        
+        if timezone_str:
+            local_tz = pytz.timezone(timezone_str)
+            dt = local_tz.localize(datetime(date.year, date.month, date.day))
+            timezone_offset = dt.utcoffset().total_seconds() / 3600
+        else:
+            # Fallback to longitude-based estimation
+            timezone_offset = round(lon / 15)
     
     # Calculate Julian date
     year = date.year
