@@ -1,5 +1,5 @@
-# FIXED VERSION - app.py
-# Copy this entire file to replace your backend app.py
+# COMPLETE FIXED VERSION - app.py
+# Updated with timezone support, proper Asr calculation, and PostgreSQL integration
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -20,36 +20,40 @@ CALCULATION_METHODS = {
     'TEHRAN': {'fajr': 17.7, 'isha': 14}
 }
 
-def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard', timezone_offset=None):
-    """
-    Calculate prayer times using astronomical algorithms
-    
-    FIXED VERSION with:
-    - Proper Asr calculation
-    - Timezone support
-    - Error handling
-    """
-    # Get calculation parameters
-    params = CALCULATION_METHODS.get(method, CALCULATION_METHODS['ISNA'])
-    
-    # Auto-calculate timezone offset from longitude if not provided
-     # IMPROVED: Better timezone detection
-    if timezone_offset is None:
-        # Use timezonefinder library (added to requirements.txt)
+def get_timezone_offset(lat, lon):
+    """Get timezone offset from coordinates"""
+    try:
         from timezonefinder import TimezoneFinder
-        from datetime import timezone as tz
         import pytz
         
         tf = TimezoneFinder()
         timezone_str = tf.timezone_at(lat=lat, lng=lon)
         
         if timezone_str:
-            local_tz = pytz.timezone(timezone_str)
-            dt = local_tz.localize(datetime(date.year, date.month, date.day))
-            timezone_offset = dt.utcoffset().total_seconds() / 3600
+            tz = pytz.timezone(timezone_str)
+            dt = tz.localize(datetime.now())
+            offset_seconds = dt.utcoffset().total_seconds()
+            return offset_seconds / 3600
         else:
             # Fallback to longitude-based estimation
-            timezone_offset = round(lon / 15)
+            return round(lon / 15)
+    except Exception as e:
+        print(f"⚠️ Timezone calculation error: {e}")
+        # Fallback to longitude-based estimation
+        return round(lon / 15)
+
+def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard', timezone_offset=None):
+    """
+    Calculate prayer times using astronomical algorithms with timezone support
+    """
+    # Get calculation parameters
+    params = CALCULATION_METHODS.get(method, CALCULATION_METHODS['ISNA'])
+    
+    # Auto-calculate timezone offset if not provided
+    if timezone_offset is None:
+        timezone_offset = get_timezone_offset(lat, lon)
+    
+    print(f"🕌 Calculating for {date} with timezone offset: {timezone_offset} hours")
     
     # Calculate Julian date
     year = date.year
@@ -81,70 +85,66 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard',
     epsilon = 23.439291 - 0.0130042 * T
     
     declination = math.degrees(math.asin(math.sin(math.radians(epsilon)) * 
-                                         math.sin(math.radians(lambda_sun))))
+                                      math.sin(math.radians(lambda_sun))))
     
     # Equation of time
-    E = 4 * (M - 0.0057183 - L0 + C)
+    E = 4 * (L0 - lambda_sun)
     
-    # Helper function for time calculation
     def time_for_angle(angle):
+        """Calculate time for a given sun angle"""
         try:
-            cos_val = (math.sin(math.radians(-angle)) - 
+            cos_val = (math.sin(math.radians(angle)) - 
                        math.sin(math.radians(lat)) * math.sin(math.radians(declination))) / \
                       (math.cos(math.radians(lat)) * math.cos(math.radians(declination)))
-            cos_val = max(-1, min(1, cos_val))  # Clamp between -1 and 1
-            hour_angle = math.degrees(math.acos(cos_val)) / 15
+            cos_val = max(-1, min(1, cos_val))
+            hour_angle = math.degrees(math.acos(-cos_val)) / 15
             return 12 - hour_angle - (lon / 15) + timezone_offset - (E / 60)
         except Exception as e:
-            print(f"⚠️ Error calculating time for angle {angle}: {e}")
-            return 12  # Return noon as fallback
+            print(f"⚠️ Time calculation error for angle {angle}: {e}")
+            return 12
     
-    # Fajr
-    fajr = time_for_angle(params['fajr'])
+    # Calculate prayer times
+    try:
+        fajr = time_for_angle(-params['fajr'])
+    except Exception as e:
+        print(f"⚠️ Fajr calculation error: {e}")
+        fajr = 5.0
     
-    # Sunrise
-    sunrise = time_for_angle(-0.833)
+    try:
+        sunrise_angle = -0.833
+        cos_val = (math.sin(math.radians(sunrise_angle)) - 
+                   math.sin(math.radians(lat)) * math.sin(math.radians(declination))) / \
+                  (math.cos(math.radians(lat)) * math.cos(math.radians(declination)))
+        cos_val = max(-1, min(1, cos_val))
+        hour_angle = math.degrees(math.acos(-cos_val)) / 15
+        sunrise = 12 - hour_angle - (lon / 15) + timezone_offset - (E / 60)
+    except Exception as e:
+        print(f"⚠️ Sunrise calculation error: {e}")
+        sunrise = 6.0
     
-    # Dhuhr (solar noon)
+    # Dhuhr (midday)
     dhuhr = 12 - (lon / 15) + timezone_offset - (E / 60)
     
-    # ===== FIXED ASR CALCULATION =====
+    # Asr calculation - FIXED VERSION
     try:
         shadow_factor = 2 if asr_method == 'hanafi' else 1
+        cot_val = shadow_factor + math.tan(math.radians(abs(lat - declination)))
+        asr_angle = math.degrees(math.atan(1 / cot_val))
         
-        # Calculate Asr angle more safely
-        lat_decl_diff = abs(lat - declination)
+        cos_asr = (math.sin(math.radians(asr_angle)) - 
+                   math.sin(math.radians(lat)) * math.sin(math.radians(declination))) / \
+                  (math.cos(math.radians(lat)) * math.cos(math.radians(declination)))
+        cos_asr = max(-1, min(1, cos_asr))
+        hour_angle_asr = math.degrees(math.acos(-cos_asr)) / 15
         
-        # Handle extreme latitudes
-        if lat_decl_diff > 85:
-            lat_decl_diff = 85
+        asr = 12 + hour_angle_asr - (lon / 15) + timezone_offset - (E / 60)
         
-        # Safe arccotangent function
-        acot = lambda x: math.degrees(math.atan(1 / x)) if x != 0 else 90
-        
-        # Calculate shadow length
-        tan_value = math.tan(math.radians(lat_decl_diff))
-        shadow_length = shadow_factor + tan_value
-        
-        # Ensure shadow_length is positive and reasonable
-        if shadow_length <= 0:
-            shadow_length = shadow_factor + 1
-        
-        # Calculate Asr angle
-        angle_asr = acot(shadow_length)
-        asr = time_for_angle(90 - angle_asr)
-        
-        # Validation: Asr must be between Dhuhr and Maghrib
-        # Typically Asr is 3-5 hours after Dhuhr
+        # Validation: Asr must be after Dhuhr
         if asr <= dhuhr:
-            print(f"⚠️ Asr ({asr:.2f}) is before Dhuhr ({dhuhr:.2f}), using fallback")
-            asr = dhuhr + 3.5  # Safe default: 3.5 hours after Dhuhr
-        
+            asr = dhuhr + 3.5
     except Exception as e:
-        print(f"❌ Asr calculation error: {e}, using fallback")
-        # Fallback: Asr is typically 3.5 hours after Dhuhr
+        print(f"⚠️ Asr calculation error: {e}, using fallback")
         asr = dhuhr + 3.5
-    # ===== END FIXED ASR CALCULATION =====
     
     # Maghrib (sunset)
     try:
@@ -158,7 +158,7 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard',
         maghrib = 12 + hour_angle - (lon / 15) + timezone_offset - (E / 60)
     except Exception as e:
         print(f"⚠️ Maghrib calculation error: {e}")
-        maghrib = dhuhr + 6  # Fallback: ~6 hours after Dhuhr
+        maghrib = dhuhr + 6
     
     # Isha
     try:
@@ -167,11 +167,11 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard',
             isha = maghrib + params['isha'] / 60
         else:
             # Angle-based
-            isha = time_for_angle(params['isha'])
+            isha = time_for_angle(-params['isha'])
             
             # Validation: Isha must be after Maghrib
             if isha <= maghrib:
-                isha = maghrib + 1.5  # Fallback: 90 minutes after Maghrib
+                isha = maghrib + 1.5
     except Exception as e:
         print(f"⚠️ Isha calculation error: {e}")
         isha = maghrib + 1.5
@@ -282,7 +282,7 @@ def get_prayer_times():
         method = data.get('method', 'ISNA')
         asr_method = data.get('asr_method', 'standard')
         
-        # Get timezone offset (auto-calculate if not provided)
+        # Get timezone offset from client (optional)
         timezone_offset = data.get('timezone_offset')
         
         # Parse date
@@ -323,19 +323,179 @@ def get_prayer_times():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 400
 
-# ============= MOSQUE ROUTES (FIXED FOR DUPLICATES) =============
+# ============= MONTHLY PRAYERS ROUTE =============
+
+@app.route('/api/monthly-prayers', methods=['POST'])
+def get_monthly_prayers():
+    """Get prayer times for entire month"""
+    data = request.json
+    
+    try:
+        lat = float(data.get('latitude'))
+        lon = float(data.get('longitude'))
+        year = int(data.get('year'))
+        month = int(data.get('month'))
+        method = data.get('method', 'ISNA')
+        asr_method = data.get('asr_method', 'standard')
+        timezone_offset = data.get('timezone_offset')
+        
+        # Calculate number of days in month
+        import calendar
+        num_days = calendar.monthrange(year, month)[1]
+        
+        prayers = []
+        for day in range(1, num_days + 1):
+            date = datetime(year, month, day)
+            date_str = date.strftime('%Y-%m-%d')
+            
+            # Check cache first
+            cached = get_cached_prayer_times(lat, lon, date_str, method, asr_method)
+            if cached:
+                times = cached
+            else:
+                times = calculate_prayer_times(lat, lon, date, method, asr_method, timezone_offset)
+                cache_prayer_times(lat, lon, date_str, method, asr_method, times)
+            
+            prayers.append({
+                'day': day,
+                'date': date_str,
+                'times': times
+            })
+        
+        return jsonify({
+            'success': True,
+            'year': year,
+            'month': month,
+            'prayers': prayers
+        })
+        
+    except Exception as e:
+        print(f"❌ Monthly prayers error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+# ============= RAMADAN ROUTE =============
+
+@app.route('/api/ramadan', methods=['POST'])
+def get_ramadan():
+    """Get Ramadan fasting schedule"""
+    data = request.json
+    
+    try:
+        lat = float(data.get('latitude'))
+        lon = float(data.get('longitude'))
+        year = int(data.get('year'))
+        method = data.get('method', 'ISNA')
+        timezone_offset = data.get('timezone_offset')
+        
+        # Get Ramadan dates from database
+        query = """
+            SELECT start_date, end_date 
+            FROM ramadan_dates 
+            WHERE gregorian_year = %s
+        """
+        ramadan_dates = execute_query(query, (year,), fetch_one=True)
+        
+        if not ramadan_dates:
+            return jsonify({
+                'success': False,
+                'error': f'Ramadan dates not found for {year}'
+            }), 404
+        
+        start_date = ramadan_dates['start_date']
+        end_date = ramadan_dates['end_date']
+        
+        # Calculate fasting times for each day
+        fasting_schedule = []
+        current_date = start_date
+        day_num = 1
+        
+        while current_date <= end_date:
+            date_str = current_date.strftime('%Y-%m-%d')
+            
+            # Get or calculate prayer times
+            cached = get_cached_prayer_times(lat, lon, date_str, method, 'standard')
+            if cached:
+                times = cached
+            else:
+                times = calculate_prayer_times(lat, lon, current_date, method, 'standard', timezone_offset)
+                cache_prayer_times(lat, lon, date_str, method, 'standard', times)
+            
+            fasting_schedule.append({
+                'day': day_num,
+                'date': date_str,
+                'suhoor_end': times['fajr'],  # Suhoor ends at Fajr
+                'iftar_time': times['maghrib']  # Iftar at Maghrib
+            })
+            
+            current_date += timedelta(days=1)
+            day_num += 1
+        
+        return jsonify({
+            'success': True,
+            'year': year,
+            'start_date': start_date.strftime('%Y-%m-%d'),
+            'end_date': end_date.strftime('%Y-%m-%d'),
+            'fasting_schedule': fasting_schedule
+        })
+        
+    except Exception as e:
+        print(f"❌ Ramadan error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+# ============= QIBLA ROUTE =============
+
+@app.route('/api/qibla', methods=['POST'])
+def get_qibla():
+    """Calculate Qibla direction"""
+    data = request.json
+    
+    try:
+        lat = float(data.get('latitude'))
+        lon = float(data.get('longitude'))
+        
+        # Kaaba coordinates
+        kaaba_lat = 21.4225
+        kaaba_lon = 39.8262
+        
+        # Calculate bearing
+        lat_rad = math.radians(lat)
+        kaaba_lat_rad = math.radians(kaaba_lat)
+        lon_diff = math.radians(kaaba_lon - lon)
+        
+        x = math.sin(lon_diff) * math.cos(kaaba_lat_rad)
+        y = math.cos(lat_rad) * math.sin(kaaba_lat_rad) - \
+            math.sin(lat_rad) * math.cos(kaaba_lat_rad) * math.cos(lon_diff)
+        
+        bearing = math.degrees(math.atan2(x, y))
+        bearing = (bearing + 360) % 360
+        
+        return jsonify({
+            'success': True,
+            'qibla_direction': bearing,
+            'latitude': lat,
+            'longitude': lon
+        })
+        
+    except Exception as e:
+        print(f"❌ Qibla error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+# ============= MOSQUE ROUTES =============
 
 @app.route('/api/mosques/nearby', methods=['GET'])
 def get_nearby_mosques():
-    """Find mosques within radius of coordinates - FIXED VERSION"""
+    """Find mosques within radius of coordinates"""
     try:
         lat = float(request.args.get('lat'))
         lng = float(request.args.get('lng'))
-        radius = float(request.args.get('radius', 10))  # km
+        radius = float(request.args.get('radius', 10))
         
         print(f"🕌 Searching for mosques near ({lat}, {lng}) within {radius}km")
         
-        # IMPROVED query with deduplication using CTE
         query = """
             WITH mosque_distances AS (
                 SELECT 
@@ -367,12 +527,11 @@ def get_nearby_mosques():
         
         mosques = execute_query(query, (lat, lng, lat, radius))
         
-        # Additional Python-level deduplication as safety net
+        # Additional deduplication
         seen = set()
         unique_mosques = []
         
         for mosque in (mosques or []):
-            # Create a unique key based on name and rounded location
             key = (
                 mosque['name'].lower().strip(),
                 round(float(mosque['latitude']), 4),
@@ -383,7 +542,7 @@ def get_nearby_mosques():
                 seen.add(key)
                 unique_mosques.append(dict(mosque))
         
-        print(f"✅ Found {len(unique_mosques)} unique mosques (removed {len(mosques or []) - len(unique_mosques)} duplicates)")
+        print(f"✅ Found {len(unique_mosques)} unique mosques")
         
         return jsonify({
             'success': True,
@@ -402,13 +561,12 @@ def get_nearby_mosques():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
-# ============= HEALTH CHECK =============
+# ============= HEALTH & INFO ROUTES =============
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     try:
-        # Test database connection
         result = execute_query("SELECT 1", fetch_one=True)
         db_status = 'connected' if result else 'error'
     except:
@@ -420,8 +578,6 @@ def health_check():
         'database': db_status,
         'message': 'Worldwide Salah API is running'
     })
-
-# ============= CALCULATION METHODS =============
 
 @app.route('/api/calculation-methods', methods=['GET'])
 def get_calculation_methods():
@@ -444,6 +600,7 @@ def get_calculation_methods():
 
 if __name__ == '__main__':
     print("🚀 Starting Worldwide Salah API...")
-    print("📍 Prayer time calculation: FIXED")
-    print("🕌 Mosque deduplication: FIXED")
+    print("📍 Prayer time calculation with timezone support: ENABLED")
+    print("🕌 Mosque deduplication: ENABLED")
+    print("💾 PostgreSQL caching: ENABLED")
     app.run(host='0.0.0.0', port=5000, debug=True)
