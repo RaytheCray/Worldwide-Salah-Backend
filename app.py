@@ -598,6 +598,24 @@ def get_calculation_methods():
         }
     })
 
+@app.route('/')
+def home():
+    """Root endpoint - API information"""
+    return jsonify({
+        'name': 'Worldwide Salah API',
+        'version': '1.0',
+        'status': 'running',
+        'endpoints': {
+            'health': '/api/health',
+            'prayer_times': '/api/prayer-times',
+            'monthly': '/api/monthly-prayers',
+            'ramadan': '/api/ramadan',
+            'qibla': '/api/qibla',
+            'mosques': '/api/mosques',
+            'methods': '/api/calculation-methods'
+        }
+    })
+
 if __name__ == '__main__':
     print("🚀 Starting Worldwide Salah API...")
     print("📍 Prayer time calculation with timezone support: ENABLED")
