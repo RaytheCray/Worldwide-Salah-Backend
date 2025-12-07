@@ -1,4 +1,4 @@
-# utils/db.py - Updated for psycopg3
+# utils/db.py - For psycopg3
 import psycopg
 from psycopg.rows import dict_row
 import os
