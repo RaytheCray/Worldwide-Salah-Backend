@@ -1,96 +1,81 @@
-# Using praytimes library
+# Using IslamicFinder API-compatible calculations
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from utils.db import execute_query
 import math
+import requests
 
 app = Flask(__name__)
 CORS(app)
 
-# Install: pip install praytimes
-try:
-    from praytimes import PrayTimes
-    PRAYTIMES_AVAILABLE = True
-    print("✅ PrayTimes library loaded successfully")
-except ImportError:
-    PRAYTIMES_AVAILABLE = False
-    print("⚠️ PrayTimes library not found. Please install: pip install praytimes")
-
-# Calculation methods mapping
-CALCULATION_METHODS = {
-    'ISNA': 'ISNA',
-    'MWL': 'MWL',
-    'EGYPTIAN': 'Egypt',
-    'KARACHI': 'Karachi',
-    'MAKKAH': 'Makkah',
-    'TEHRAN': 'Tehran'
-}
-
-def calculate_prayer_times_with_praytimes(lat, lon, date, method='ISNA', asr_method='standard'):
+def calculate_prayer_times_accurate(lat, lon, date, method='ISNA', asr_method='standard'):
     """
-    Calculate prayer times using the praytimes library
+    Calculate prayer times using the Aladhan API (free, reliable, accurate)
+    This is what IslamicFinder and most apps use behind the scenes
     """
     try:
-        # Create PrayTimes object
-        pt = PrayTimes()
+        # Format date
+        date_str = date.strftime('%d-%m-%Y')
         
-        # Set calculation method
-        method_name = CALCULATION_METHODS.get(method, 'ISNA')
-        pt.setMethod(method_name)
-        
-        # Set Asr calculation method
-        if asr_method == 'hanafi':
-            pt.adjust({'asr': 'Hanafi'})
-        else:
-            pt.adjust({'asr': 'Standard'})
-        
-        # Get timezone offset (in hours)
-        # Using the date's timezone offset
-        import pytz
-        from timezonefinder import TimezoneFinder
-        
-        tf = TimezoneFinder()
-        timezone_str = tf.timezone_at(lat=lat, lng=lon)
-        
-        if timezone_str:
-            tz = pytz.timezone(timezone_str)
-            dt = tz.localize(datetime(date.year, date.month, date.day))
-            timezone_offset = dt.utcoffset().total_seconds() / 3600
-        else:
-            # Fallback to approximate timezone
-            timezone_offset = round(lon / 15)
-        
-        # Calculate prayer times
-        # praytimes expects: (year, month, day, latitude, longitude, timezone)
-        times = pt.getTimes(
-            (date.year, date.month, date.day),
-            (lat, lon),
-            timezone_offset
-        )
-        
-        # Format times (praytimes returns 24-hour format like "05:53")
-        formatted_times = {
-            'fajr': times['fajr'],
-            'sunrise': times['sunrise'],
-            'dhuhr': times['dhuhr'],
-            'asr': times['asr'],
-            'maghrib': times['maghrib'],
-            'isha': times['isha']
+        # Method mapping to Aladhan API codes
+        method_codes = {
+            'ISNA': 2,
+            'MWL': 3,
+            'EGYPTIAN': 5,
+            'KARACHI': 1,
+            'MAKKAH': 4,
+            'TEHRAN': 7
         }
         
-        print(f"✅ Prayer times calculated with praytimes library:")
-        print(f"   Location: {lat:.4f}, {lon:.4f}")
-        print(f"   Date: {date.strftime('%Y-%m-%d')}")
-        print(f"   Method: {method}, Asr: {asr_method}")
-        print(f"   Fajr: {formatted_times['fajr']}, Sunrise: {formatted_times['sunrise']}, Dhuhr: {formatted_times['dhuhr']}")
-        print(f"   Asr: {formatted_times['asr']}, Maghrib: {formatted_times['maghrib']}, Isha: {formatted_times['isha']}")
+        method_code = method_codes.get(method, 2)
         
-        return formatted_times
+        # School mapping (0 = Standard Shafi, 1 = Hanafi)
+        school = 1 if asr_method == 'hanafi' else 0
         
+        # Call Aladhan API
+        url = f'http://api.aladhan.com/v1/timings/{date_str}'
+        params = {
+            'latitude': lat,
+            'longitude': lon,
+            'method': method_code,
+            'school': school
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data['code'] == 200:
+                timings = data['data']['timings']
+                
+                # Extract and format times (they come as HH:MM)
+                times = {
+                    'fajr': timings['Fajr'],
+                    'sunrise': timings['Sunrise'],
+                    'dhuhr': timings['Dhuhr'],
+                    'asr': timings['Asr'],
+                    'maghrib': timings['Maghrib'],
+                    'isha': timings['Isha']
+                }
+                
+                print(f"✅ Prayer times calculated via Aladhan API:")
+                print(f"   Location: {lat:.4f}, {lon:.4f}")
+                print(f"   Date: {date.strftime('%Y-%m-%d')}")
+                print(f"   Method: {method}, Asr: {asr_method}")
+                print(f"   Fajr: {times['fajr']}, Sunrise: {times['sunrise']}, Dhuhr: {times['dhuhr']}")
+                print(f"   Asr: {times['asr']}, Maghrib: {times['maghrib']}, Isha: {times['isha']}")
+                
+                return times
+            else:
+                raise Exception(f"Aladhan API error: {data.get('data', 'Unknown error')}")
+        else:
+            raise Exception(f"HTTP error: {response.status_code}")
+            
     except Exception as e:
-        print(f"❌ PrayTimes calculation error: {e}")
+        print(f"❌ Prayer time calculation error: {e}")
         import traceback
         traceback.print_exc()
         raise
@@ -170,12 +155,6 @@ def get_prayer_times():
     data = request.json
     
     try:
-        if not PRAYTIMES_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': 'PrayTimes library not installed. Run: pip install praytimes'
-            }), 500
-        
         lat = float(data.get('latitude'))
         lon = float(data.get('longitude'))
         date_str = data.get('date')
@@ -200,9 +179,9 @@ def get_prayer_times():
                     'cached': True
                 })
         
-        # Calculate new times using praytimes library
-        print(f"🔄 Calculating prayer times with praytimes for {date_str}")
-        times = calculate_prayer_times_with_praytimes(lat, lon, date, method, asr_method)
+        # Calculate new times using Aladhan API
+        print(f"🔄 Calculating prayer times via Aladhan API for {date_str}")
+        times = calculate_prayer_times_accurate(lat, lon, date, method, asr_method)
         
         # Cache the results
         cache_prayer_times(lat, lon, date_str, method, asr_method, times)
@@ -230,12 +209,6 @@ def get_monthly_prayers():
     data = request.json
     
     try:
-        if not PRAYTIMES_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': 'PrayTimes library not installed'
-            }), 500
-        
         lat = float(data.get('latitude'))
         lon = float(data.get('longitude'))
         year = int(data.get('year'))
@@ -256,7 +229,7 @@ def get_monthly_prayers():
             if cached:
                 times = cached
             else:
-                times = calculate_prayer_times_with_praytimes(lat, lon, date, method, asr_method)
+                times = calculate_prayer_times_accurate(lat, lon, date, method, asr_method)
                 cache_prayer_times(lat, lon, date_str, method, asr_method, times)
             
             prayers.append({
@@ -286,12 +259,6 @@ def get_ramadan():
     data = request.json
     
     try:
-        if not PRAYTIMES_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': 'PrayTimes library not installed'
-            }), 500
-        
         lat = float(data.get('latitude'))
         lon = float(data.get('longitude'))
         year = int(data.get('year'))
@@ -327,7 +294,7 @@ def get_ramadan():
             if cached:
                 times = cached
             else:
-                times = calculate_prayer_times_with_praytimes(lat, lon, current_date, method, 'standard')
+                times = calculate_prayer_times_accurate(lat, lon, current_date, method, 'standard')
                 cache_prayer_times(lat, lon, date_str, method, 'standard', times)
             
             fasting_schedule.append({
@@ -436,7 +403,7 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'version': '1.0',
-        'praytimes_available': PRAYTIMES_AVAILABLE
+        'calculation_method': 'Aladhan API'
     })
 
 # ============= CALCULATION METHODS =============
@@ -446,12 +413,12 @@ def get_calculation_methods():
     """Get available calculation methods"""
     return jsonify({
         'success': True,
-        'methods': list(CALCULATION_METHODS.keys())
+        'methods': ['ISNA', 'MWL', 'EGYPTIAN', 'KARACHI', 'MAKKAH', 'TEHRAN']
     })
 
 if __name__ == '__main__':
     print('🚀 Starting Worldwide Salah API...')
-    print(f'📍 Prayer time calculation: {"ENABLED (praytimes library)" if PRAYTIMES_AVAILABLE else "DISABLED - install praytimes"}')
+    print('📍 Prayer time calculation: ENABLED (Aladhan API)')
     print('🕌 Mosque queries: ENABLED')
     print('💾 PostgreSQL caching: ENABLED')
     app.run(host='0.0.0.0', port=5000, debug=True)
