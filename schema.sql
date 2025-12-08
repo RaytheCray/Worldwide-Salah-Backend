@@ -148,9 +148,9 @@ CREATE TRIGGER update_mosque_prayer_times_updated_at BEFORE UPDATE ON mosque_pra
 
 -- Insert sample Ramadan dates
 INSERT INTO ramadan_dates (hijri_year, gregorian_year, start_date, end_date) VALUES
-(1446, 2025, '2025-02-28', '2025-03-30'),
-(1447, 2026, '2026-02-17', '2026-03-19'),
-(1448, 2027, '2027-02-06', '2027-03-08');
+(1446, 2025, '2025-02-28', '2025-03-29'),
+(1447, 2026, '2026-02-17', '2026-03-18'),
+(1448, 2027, '2027-02-06', '2027-03-07');
 
 -- Sample mosque data (New York area)
 INSERT INTO mosques (name, address, city, country, latitude, longitude, phone, verified) VALUES
@@ -163,5 +163,5 @@ INSERT INTO mosque_prayer_times (mosque_id, prayer_name, prayer_time) VALUES
 (1, 'Fajr', '05:45:00'),
 (1, 'Dhuhr', '13:15:00'),
 (1, 'Asr', '15:15:00'),
-(1, 'Maghrib', '14:35:00'),
-(1, 'Isha', '20:00:00');
+(1, 'Maghrib', '16:35:00'),
+(1, 'Isha', '19:00:00');
