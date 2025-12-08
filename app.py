@@ -287,7 +287,7 @@ def get_prayer_times():
         timezone_offset = data.get('timezone_offset')
         
         # Parse date
-        date = datetime.strptime(date_str, '%m-%d-%Y')
+        date = datetime.strptime(date_str, '%Y-%m-%d')
         
         # Check cache first (unless bypassed)
         if not bypass_cache:
