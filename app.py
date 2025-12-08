@@ -281,25 +281,27 @@ def get_prayer_times():
         date_str = data.get('date')
         method = data.get('method', 'ISNA')
         asr_method = data.get('asr_method', 'standard')
+        bypass_cache = data.get('bypass_cache', False)
         
         # Get timezone offset from client (optional)
         timezone_offset = data.get('timezone_offset')
         
         # Parse date
-        date = datetime.strptime(date_str, '%Y-%m-%d')
+        date = datetime.strptime(date_str, '%m-%d-%Y')
         
-        # Check cache first
-        cached = get_cached_prayer_times(lat, lon, date_str, method, asr_method)
-        if cached:
-            print(f"📦 Serving cached prayer times for {date_str}")
-            return jsonify({
-                'success': True,
-                'date': date_str,
-                'times': cached,
-                'method': method,
-                'asr_method': asr_method,
-                'cached': True
-            })
+        # Check cache first (unless bypassed)
+        if not bypass_cache:
+            cached = get_cached_prayer_times(lat, lon, date_str, method, asr_method)
+            if cached:
+                print(f"📦 Serving cached prayer times for {date_str}")
+                return jsonify({
+                    'success': True,
+                    'date': date_str,
+                    'times': cached,
+                    'method': method,
+                    'asr_method': asr_method,
+                    'cached': True
+                })
         
         # Calculate new times
         print(f"🔄 Calculating prayer times for {date_str}")
