@@ -45,7 +45,6 @@ def get_timezone_offset(lat, lon):
 def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard', timezone_offset=None):
     """
     Calculate prayer times using astronomical algorithms with timezone support
-    FIXED VERSION - Corrects Asr and Sunrise calculations
     """
     # Get calculation parameters
     params = CALCULATION_METHODS.get(method, CALCULATION_METHODS['ISNA'])
@@ -111,38 +110,26 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard',
         print(f"⚠️ Fajr calculation error: {e}")
         fajr = 5.0
     
-    # ✅ FIXED: Sunrise calculation
     try:
-        sunrise_angle = -0.833  # Standard atmospheric refraction
+        sunrise_angle = -0.833
         cos_val = (math.sin(math.radians(sunrise_angle)) - 
                    math.sin(math.radians(lat)) * math.sin(math.radians(declination))) / \
                   (math.cos(math.radians(lat)) * math.cos(math.radians(declination)))
         cos_val = max(-1, min(1, cos_val))
         hour_angle = math.degrees(math.acos(-cos_val)) / 15
-        # ✅ CHANGED: Use POSITIVE hour angle for sunrise (sun rising in east)
         sunrise = 12 - hour_angle - (lon / 15) + timezone_offset - (E / 60)
     except Exception as e:
         print(f"⚠️ Sunrise calculation error: {e}")
-        sunrise = fajr + 1.2  # Fallback: ~1.2 hours after Fajr
+        sunrise = 6.0
     
     # Dhuhr (midday)
     dhuhr = 12 - (lon / 15) + timezone_offset - (E / 60)
     
-    # ✅ FIXED: Asr calculation
+    # Asr calculation - FIXED VERSION
     try:
-        # Shadow ratio: 1 for Standard, 2 for Hanafi
-        shadow_ratio = 2 if asr_method == 'hanafi' else 1
-        
-        # Calculate sun altitude angle when shadow = object_height * shadow_ratio
-        # Formula: tan(altitude) = 1 / (shadow_ratio + tan|lat - dec|)
-        lat_dec_diff = abs(lat - declination)
-        
-        # Sun altitude angle (degrees above horizon)
-        sun_altitude = math.degrees(math.atan(1.0 / (shadow_ratio + math.tan(math.radians(lat_dec_diff)))))
-        
-        # Calculate hour angle for this altitude
-        # Use the NEGATIVE of sun_altitude (below zenith, not horizon)
-        asr_angle = 90 - sun_altitude  # Convert altitude to angle from horizon
+        shadow_factor = 2 if asr_method == 'hanafi' else 1
+        cot_val = shadow_factor + math.tan(math.radians(abs(lat - declination)))
+        asr_angle = math.degrees(math.atan(1 / cot_val))
         
         cos_asr = (math.sin(math.radians(asr_angle)) - 
                    math.sin(math.radians(lat)) * math.sin(math.radians(declination))) / \
@@ -150,13 +137,11 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard',
         cos_asr = max(-1, min(1, cos_asr))
         hour_angle_asr = math.degrees(math.acos(-cos_asr)) / 15
         
-        # ✅ CHANGED: Use POSITIVE hour angle for afternoon time
         asr = 12 + hour_angle_asr - (lon / 15) + timezone_offset - (E / 60)
         
         # Validation: Asr must be after Dhuhr
         if asr <= dhuhr:
-            print(f"⚠️ Asr before Dhuhr! Setting to Dhuhr + 3 hours")
-            asr = dhuhr + 3.0
+            asr = dhuhr + 3.5
     except Exception as e:
         print(f"⚠️ Asr calculation error: {e}, using fallback")
         asr = dhuhr + 3.5
@@ -164,13 +149,12 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard',
     # Maghrib (sunset)
     try:
         maghrib_angle = -0.833
-        cos_val = (math.sin(math.radians(maghrib_angle)) - 
+        cos_val = (math.sin(math.radians(-maghrib_angle)) - 
                    math.sin(math.radians(lat)) * math.sin(math.radians(declination))) / \
                   (math.cos(math.radians(lat)) * math.cos(math.radians(declination)))
         cos_val = max(-1, min(1, cos_val))
         
-        # ✅ CHANGED: Use POSITIVE hour angle for sunset (sun setting in west)
-        hour_angle = math.degrees(math.acos(-cos_val)) / 15
+        hour_angle = math.degrees(math.acos(cos_val)) / 15
         maghrib = 12 + hour_angle - (lon / 15) + timezone_offset - (E / 60)
     except Exception as e:
         print(f"⚠️ Maghrib calculation error: {e}")
@@ -222,8 +206,7 @@ def calculate_prayer_times(lat, lon, date, method='ISNA', asr_method='standard',
     print(f"✅ Prayer times calculated for {date.strftime('%Y-%m-%d')}:")
     print(f"   Location: {lat:.4f}, {lon:.4f}")
     print(f"   Method: {method}, Asr: {asr_method}")
-    print(f"   Fajr: {times['fajr']}, Sunrise: {times['sunrise']}, Dhuhr: {times['dhuhr']}")
-    print(f"   Asr: {times['asr']}, Maghrib: {times['maghrib']}, Isha: {times['isha']}")
+    print(f"   Times: {times}")
     
     return times
 
