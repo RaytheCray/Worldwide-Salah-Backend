@@ -281,12 +281,13 @@ def get_ramadan():
         start_date = ramadan_dates['start_date']
         end_date = ramadan_dates['end_date']
         
-        # Calculate fasting times for each day
+        # Calculate fasting times for each day (max 30 days)
         fasting_schedule = []
         current_date = start_date
         day_num = 1
-        
-        while current_date <= end_date:
+        max_days = 30  # Islamic lunar month is maximum 30 days
+
+        while current_date <= end_date and day_num <= max_days:  # ✅ Added max_days limit
             date_str = current_date.strftime('%Y-%m-%d')
             
             # Get prayer times
@@ -306,7 +307,11 @@ def get_ramadan():
             
             current_date += timedelta(days=1)
             day_num += 1
-        
+
+        # Ensure we have 29 or 30 days (never more)
+        if len(fasting_schedule) > 30:
+            fasting_schedule = fasting_schedule[:30]
+
         return jsonify({
             'success': True,
             'year': year,
