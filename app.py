@@ -359,7 +359,7 @@ def get_qibla():
         print(f"❌ Qibla error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 400
 
-# ============= MOSQUES ROUTE =============
+# ============= MOSQUES ROUTE (POST) =============
 
 @app.route('/api/mosques', methods=['POST'])
 def get_mosques():
@@ -372,19 +372,26 @@ def get_mosques():
         radius = float(data.get('radius', 10.0))
         
         query = """
-            SELECT mosque_id, name, address, city, country,
-                   latitude, longitude, phone,
-                   ( 6371 * acos( cos( radians(%s) ) * cos( radians( latitude ) )
-                   * cos( radians( longitude ) - radians(%s) )
-                   + sin( radians(%s) ) * sin( radians( latitude ) ) ) ) AS distance
+            SELECT 
+                mosque_id, name, address, city, country,
+                latitude, longitude, phone, website,
+                ( 6371 * acos( 
+                    cos( radians(%s) ) * cos( radians( latitude ) ) * 
+                    cos( radians( longitude ) - radians(%s) ) + 
+                    sin( radians(%s) ) * sin( radians( latitude ) ) 
+                )) AS distance
             FROM mosques
             WHERE verified = TRUE
-            HAVING distance < %s
+            AND ( 6371 * acos( 
+                    cos( radians(%s) ) * cos( radians( latitude ) ) * 
+                    cos( radians( longitude ) - radians(%s) ) + 
+                    sin( radians(%s) ) * sin( radians( latitude ) ) 
+                )) < %s
             ORDER BY distance
             LIMIT 50
         """
         
-        mosques = execute_query(query, (lat, lon, lat, radius))
+        mosques = execute_query(query, (lat, lon, lat, lat, lon, lat, radius))
         
         return jsonify({
             'success': True,
@@ -393,8 +400,12 @@ def get_mosques():
         
     except Exception as e:
         print(f"❌ Mosques error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 400
-    
+
+# ============= MOSQUES ROUTE (GET) =============
+
 @app.route('/api/mosques/nearby', methods=['GET'])
 def get_mosques_nearby_get():
     """Get nearby mosques (GET method for compatibility)"""
@@ -404,19 +415,26 @@ def get_mosques_nearby_get():
         radius = float(request.args.get('radius', 10.0))
         
         query = """
-            SELECT mosque_id, name, address, city, country,
-                   latitude, longitude, phone,
-                   ( 6371 * acos( cos( radians(%s) ) * cos( radians( latitude ) )
-                   * cos( radians( longitude ) - radians(%s) )
-                   + sin( radians(%s) ) * sin( radians( latitude ) ) ) ) AS distance
+            SELECT 
+                mosque_id, name, address, city, country,
+                latitude, longitude, phone, website,
+                ( 6371 * acos( 
+                    cos( radians(%s) ) * cos( radians( latitude ) ) * 
+                    cos( radians( longitude ) - radians(%s) ) + 
+                    sin( radians(%s) ) * sin( radians( latitude ) ) 
+                )) AS distance
             FROM mosques
             WHERE verified = TRUE
-            HAVING distance < %s
+            AND ( 6371 * acos( 
+                    cos( radians(%s) ) * cos( radians( latitude ) ) * 
+                    cos( radians( longitude ) - radians(%s) ) + 
+                    sin( radians(%s) ) * sin( radians( latitude ) ) 
+                )) < %s
             ORDER BY distance
             LIMIT 50
         """
         
-        mosques = execute_query(query, (lat, lng, lat, radius))
+        mosques = execute_query(query, (lat, lng, lat, lat, lng, lat, radius))
         
         return jsonify({
             'success': True,
@@ -425,6 +443,8 @@ def get_mosques_nearby_get():
         
     except Exception as e:
         print(f"❌ Mosques error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 400
 
 # ============= HEALTH CHECK =============
