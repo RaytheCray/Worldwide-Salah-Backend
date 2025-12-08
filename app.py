@@ -372,7 +372,7 @@ def get_mosques():
         radius = float(data.get('radius', 10.0))
         
         query = """
-            SELECT id, name, address, city, state, country,
+            SELECT mosque_id, name, address, city, country,
                    latitude, longitude, phone,
                    ( 6371 * acos( cos( radians(%s) ) * cos( radians( latitude ) )
                    * cos( radians( longitude ) - radians(%s) )
@@ -405,7 +405,7 @@ def get_mosques_nearby_get():
         
         query = """
             SELECT mosque_id, name, address, city, country,
-                   latitude, longitude, phone, website, verified
+                   latitude, longitude, phone,
                    ( 6371 * acos( cos( radians(%s) ) * cos( radians( latitude ) )
                    * cos( radians( longitude ) - radians(%s) )
                    + sin( radians(%s) ) * sin( radians( latitude ) ) ) ) AS distance
