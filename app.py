@@ -394,6 +394,38 @@ def get_mosques():
     except Exception as e:
         print(f"❌ Mosques error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 400
+    
+@app.route('/api/mosques/nearby', methods=['GET'])
+def get_mosques_nearby_get():
+    """Get nearby mosques (GET method for compatibility)"""
+    try:
+        lat = float(request.args.get('lat'))
+        lng = float(request.args.get('lng'))
+        radius = float(request.args.get('radius', 10.0))
+        
+        query = """
+            SELECT id, name, address, city, state, country,
+                   latitude, longitude, phone,
+                   ( 6371 * acos( cos( radians(%s) ) * cos( radians( latitude ) )
+                   * cos( radians( longitude ) - radians(%s) )
+                   + sin( radians(%s) ) * sin( radians( latitude ) ) ) ) AS distance
+            FROM mosques
+            WHERE verified = TRUE
+            HAVING distance < %s
+            ORDER BY distance
+            LIMIT 50
+        """
+        
+        mosques = execute_query(query, (lat, lng, lat, radius))
+        
+        return jsonify({
+            'success': True,
+            'mosques': mosques if mosques else []
+        })
+        
+    except Exception as e:
+        print(f"❌ Mosques error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 # ============= HEALTH CHECK =============
 
