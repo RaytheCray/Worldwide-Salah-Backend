@@ -22,7 +22,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-populate_mosques.py
 
 # Environment variables
 .env
@@ -49,4 +48,5 @@ instance/
 htmlcov/
 
 # Logs
-*.log
+*.log.env
+.env
