@@ -35,7 +35,7 @@ def calculate_prayer_times_accurate(lat, lon, date, method='ISNA', asr_method='s
         school = 1 if asr_method == 'hanafi' else 0
         
         # Call Aladhan API
-        url = f'http://api.aladhan.com/v1/timings/{date_str}'
+        url = f'https://api.aladhan.com/v1/timings/{date_str}'
         params = {
             'latitude': lat,
             'longitude': lon,

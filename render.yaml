@@ -1,0 +1,22 @@
+# Render Blueprint: deploys the API and a PostgreSQL database
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: worldwide-salah-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python init_db.py && gunicorn app:app --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        fromDatabase:
+          name: worldwide-salah-db
+          property: connectionString
+
+databases:
+  - name: worldwide-salah-db
+    plan: free
+    databaseName: worldwide_salah

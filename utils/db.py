@@ -15,8 +15,13 @@ DB_CONFIG = {
     'port': os.getenv('DB_PORT', '5432')
 }
 
+# Hosted databases (Render, Neon, etc.) provide a single connection URL
+DATABASE_URL = os.getenv('DATABASE_URL')
+
 def get_connection():
     """Get database connection"""
+    if DATABASE_URL:
+        return psycopg.connect(DATABASE_URL, row_factory=dict_row)
     conn_string = f"dbname={DB_CONFIG['dbname']} user={DB_CONFIG['user']} password={DB_CONFIG['password']} host={DB_CONFIG['host']} port={DB_CONFIG['port']}"
     return psycopg.connect(conn_string, row_factory=dict_row)
 
