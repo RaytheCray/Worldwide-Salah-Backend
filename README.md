@@ -100,25 +100,30 @@ Request:
 
 ## Deployment
 
-### Heroku
-```bash
-heroku create worldwide-salah-api
-git push heroku main
-```
+### Render (recommended)
+This repo includes a `render.yaml` Blueprint that creates the API and a PostgreSQL database together.
 
-### Railway
-1. Connect your GitHub repository
-2. Deploy automatically
+1. Sign in at https://render.com with GitHub
+2. **New → Blueprint**, then select this repository
+3. Click **Apply**. Render creates the database, installs dependencies, and starts the API
+4. On first start, `init_db.py` creates the tables from `schema.sql` (it skips this on later starts)
+5. Your API is live at `https://<service-name>.onrender.com/api/health`
 
-### Render
-1. Connect your GitHub repository
-2. Set build command: `pip install -r requirements.txt`
-3. Set start command: `gunicorn app:app`
+Notes:
+- The free web service sleeps after ~15 minutes of inactivity; the first request afterwards takes up to a minute
+- Render's free PostgreSQL database expires after 30 days. For a database that doesn't expire, create one on
+  Neon (https://neon.tech) and set the service's `DATABASE_URL` environment variable to its connection string
+
+### Other hosts
+- Build command: `pip install -r requirements.txt`
+- Start command: `python init_db.py && gunicorn app:app --bind 0.0.0.0:$PORT`
+- Set `DATABASE_URL` to your PostgreSQL connection string
 
 ## Environment Variables
 
 - `FLASK_ENV`: development or production
 - `PORT`: Server port (default: 5000)
+- `DATABASE_URL`: PostgreSQL connection string (used instead of the `DB_*` variables when set)
 - `HOST`: Server host (default: 0.0.0.0)
 - `CORS_ORIGINS`: Allowed CORS origins
 
