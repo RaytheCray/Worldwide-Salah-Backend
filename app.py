@@ -4,6 +4,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from utils.db import execute_query
+from utils.mosque_finder import find_nearby_mosques
 import math
 import requests
 
@@ -376,27 +377,7 @@ def get_mosques():
         lon = float(data.get('longitude'))
         radius = float(data.get('radius', 10.0))
         
-        query = """
-            SELECT 
-                mosque_id, name, address, city, country,
-                latitude, longitude, phone, website,
-                ( 6371 * acos( 
-                    cos( radians(%s) ) * cos( radians( latitude ) ) * 
-                    cos( radians( longitude ) - radians(%s) ) + 
-                    sin( radians(%s) ) * sin( radians( latitude ) ) 
-                )) AS distance
-            FROM mosques
-            WHERE verified = TRUE
-            AND ( 6371 * acos( 
-                    cos( radians(%s) ) * cos( radians( latitude ) ) * 
-                    cos( radians( longitude ) - radians(%s) ) + 
-                    sin( radians(%s) ) * sin( radians( latitude ) ) 
-                )) < %s
-            ORDER BY distance
-            LIMIT 50
-        """
-        
-        mosques = execute_query(query, (lat, lon, lat, lat, lon, lat, radius))
+        mosques = find_nearby_mosques(lat, lon, radius)
         
         return jsonify({
             'success': True,
@@ -419,27 +400,7 @@ def get_mosques_nearby_get():
         lng = float(request.args.get('lng'))
         radius = float(request.args.get('radius', 10.0))
         
-        query = """
-            SELECT 
-                mosque_id, name, address, city, country,
-                latitude, longitude, phone, website,
-                ( 6371 * acos( 
-                    cos( radians(%s) ) * cos( radians( latitude ) ) * 
-                    cos( radians( longitude ) - radians(%s) ) + 
-                    sin( radians(%s) ) * sin( radians( latitude ) ) 
-                )) AS distance
-            FROM mosques
-            WHERE verified = TRUE
-            AND ( 6371 * acos( 
-                    cos( radians(%s) ) * cos( radians( latitude ) ) * 
-                    cos( radians( longitude ) - radians(%s) ) + 
-                    sin( radians(%s) ) * sin( radians( latitude ) ) 
-                )) < %s
-            ORDER BY distance
-            LIMIT 50
-        """
-        
-        mosques = execute_query(query, (lat, lng, lat, lat, lng, lat, radius))
+        mosques = find_nearby_mosques(lat, lng, radius)
         
         return jsonify({
             'success': True,
