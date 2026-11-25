@@ -98,6 +98,11 @@ Request:
 ### Health Check
 **GET** `/api/health`
 
+## Nearby Mosques
+`/api/mosques` and `/api/mosques/nearby` look up mosques from OpenStreetMap (Overpass API, no key needed)
+the first time an area is searched and store them in the `mosques` table. The same area is served from the
+database for 30 days before it is refreshed. Set `OVERPASS_URL` to use a different Overpass server.
+
 ## Deployment
 
 ### Render (recommended)
