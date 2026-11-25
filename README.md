@@ -99,9 +99,11 @@ Request:
 **GET** `/api/health`
 
 ## Nearby Mosques
-`/api/mosques` and `/api/mosques/nearby` look up mosques from OpenStreetMap (Overpass API, no key needed)
-the first time an area is searched and store them in the `mosques` table. The same area is served from the
-database for 30 days before it is refreshed. Set `OVERPASS_URL` to use a different Overpass server.
+`/api/mosques` and `/api/mosques/nearby` look up mosques the first time an area is searched and store them in
+the `mosques` table. The same area is served from the database for 30 days before it is refreshed.
+
+- **Google Places** (Nearby Search, `type=mosque`) is used when `GOOGLE_API_KEY` is set
+- **OpenStreetMap** (Overpass API, no key) is the fallback. Set `OVERPASS_URL` to use a different Overpass server
 
 ## Deployment
 
